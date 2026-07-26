@@ -33,8 +33,19 @@ def send_prediction(home_team: str, away_team: str, top_scorelines: list, outcom
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         resp = requests.post(url, json={"chat_id": config.TELEGRAM_CHAT_ID, "text": message}, timeout=10)
-        resp.raise_for_status()
+        if not resp.ok:
+            # Telegram's response body has the ACTUAL specific reason (e.g.
+            # "chat not found", "bot was blocked by the user", "not enough
+            # rights to send text messages") — surface that instead of just
+            # the generic HTTP status, since that's what actually tells you
+            # what to fix.
+            try:
+                detail = resp.json().get("description", resp.text)
+            except ValueError:
+                detail = resp.text
+            log.error("Telegram rejected the message (HTTP %d): %s", resp.status_code, detail)
+            return False
         return True
     except requests.RequestException as e:
-        log.error("Failed to send Telegram alert: %s", e)
+        log.error("Failed to reach Telegram at all: %s", e)
         return False

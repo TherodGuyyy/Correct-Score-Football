@@ -1,0 +1,53 @@
+name: Correct Score Predictions
+
+# 3x/day — football-data.org's real rate limit is 50 req/min (confirmed
+# from their own docs), so this frequency is comfortably fine.
+on:
+  schedule:
+    - cron: '0 6,14,22 * * *'   # 6am, 2pm, 10pm UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to commit the updated alerted_matches.json back
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # 10 leagues x 2 calls x 6.5s pacing ≈ 2.2 min, plus buffer
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run predictions
+        run: python main.py
+        env:
+          RUN_ONCE: "true"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          COMPETITION_CODES: "PL,PD,SA,BL1,FL1,CL,ELC,DED,PPL,BSA"
+          DAYS_AHEAD: "3"
+          MIN_TOP_SCORELINE_PROB: "0.10"
+
+      # Persist the "already alerted" tracking file back to the repo so
+      # the NEXT run (a fresh container, no memory of this one) knows not
+      # to re-send the same match prediction again today.
+      - name: Save alerted-matches state
+        run: |
+          if [ -n "$(git status --porcelain alerted_matches.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add alerted_matches.json
+            git commit -m "Update alerted matches state [skip ci]"
+            git push
+          else
+            echo "No change to alerted_matches.json — nothing to commit."
+          fi
